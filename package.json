@@ -1,0 +1,9 @@
+{
+  "name": "produto-em-um-lugar",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "validate": "node scripts/validate-artifact.mjs"
+  }
+}
