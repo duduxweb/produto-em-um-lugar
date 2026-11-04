@@ -22,4 +22,13 @@ assert.equal(
   `${pathToFileURL(workerPath)} must export default.fetch`,
 );
 
-console.log("Artifact is valid ESM and exports default.fetch");
+const pageResponse = await workerModule.default.fetch(new Request("https://produto-em-um-lugar.invalid/"));
+assert.equal(pageResponse.status, 200, "The home page must load successfully");
+const pageHtml = await pageResponse.text();
+const inlineScripts = [...pageHtml.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
+assert.ok(inlineScripts.length > 0, "The home page must include its application script");
+for (const [index, script] of inlineScripts.entries()) {
+  assert.doesNotThrow(() => new Function(script), `Inline page script ${index + 1} must be valid JavaScript`);
+}
+
+console.log("Artifact is valid ESM, serves the home page, and its inline JavaScript parses");
