@@ -127,7 +127,7 @@ async function inspectProduct(input) {
   const statusText = `${response.status} ${htmlText.slice(0,7000)}`.toLowerCase();
   const blocked = response.status === 403 || response.status === 429 || /captcha|verify you are human|verifique que você é humano|unusual traffic|traffic\.error|access denied|login required|login necessário|robot check/.test(statusText);
   const productSignal = Boolean(ld.title || ld.price || (ld.images||[]).length || meta["product:price:amount"] || meta["og:price:amount"]);
-  if (blocked && !productSignal) throw publicError("A loja limitou esta consulta ou pediu verificação. Não consegui obter os detalhes sem login.", 403);
+  if (blocked && !productSignal) throw publicError("A loja bloqueou a leitura automatizada ou pediu uma verificação. Não consegui extrair os dados públicos nesta consulta.", 403);
   if (!title) {
     const message = market === "Shopee"
       ? "O link da Shopee abriu, mas esta página não trouxe os dados do produto no HTML público. Ela pode carregar os detalhes só no app ou exigir uma sessão da loja; não tentei contornar essa limitação."
