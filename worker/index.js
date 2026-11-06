@@ -69,7 +69,7 @@ const page = `<!doctype html>
 
 const MAX_HTML_BYTES = 2_500_000;
 const MAX_BODY_BYTES = 16_000;
-const MAX_REDIRECTS = 6;
+const MAX_REDIRECTS = 10;
 const LIMIT_WINDOW_MS = 60_000;
 const LIMIT_PER_WINDOW = 18;
 const requestCounts = new Map();
@@ -249,6 +249,10 @@ async function fetchProductPage(start, options = {}) {
   let current = start;
   const initialMarket = marketOf(start.hostname);
   for (let hop=0; hop<=MAX_REDIRECTS; hop++) {
+    if (initialMarket === "AliExpress") {
+      const nested=aliExpressNestedTarget(current);
+      if(nested){current=nested;hop--;continue;}
+    }
     if (marketOf(current.hostname) !== initialMarket) throw publicError("O link redirecionou para outra loja. Por segurança, parei a consulta.",422,{resolvedUrl:current.toString(),market:initialMarket});
     let res;
     try {
@@ -259,6 +263,7 @@ async function fetchProductPage(start, options = {}) {
       if(!location)throw publicError("A loja enviou um redirecionamento sem destino válido.");
       if(hop===MAX_REDIRECTS)throw publicError("Esse link passou por redirecionamentos demais.",422,{resolvedUrl:current.toString(),market:initialMarket});
       let next;try{next=new URL(location,current)}catch{throw publicError("A loja enviou um redirecionamento inválido.")}
+      if(initialMarket==="AliExpress")next=aliExpressNestedTarget(next)||next;
       if(next.protocol!=="https:"||marketOf(next.hostname)!==initialMarket)throw publicError("O redirecionamento saiu da loja esperada. Por segurança, parei a consulta.",422,{resolvedUrl:current.toString(),market:initialMarket});
       current=next;continue;
     }
@@ -269,6 +274,19 @@ async function fetchProductPage(start, options = {}) {
     return {status:res.status,html,url:current};
   }
   throw publicError("Não foi possível abrir esse endereço.");
+}
+
+function aliExpressNestedTarget(url) {
+  if(url.hostname.toLowerCase()!=="login.aliexpress.com"||!url.pathname.toLowerCase().includes("sync_cookie_read"))return null;
+  let value=url.searchParams.get("xman_goto");
+  for(let i=0;i<2&&value;i++){
+    try{
+      const target=new URL(value);
+      if(target.protocol==="https:"&&marketOf(target.hostname)==="AliExpress")return target;
+      return null;
+    }catch{try{value=decodeURIComponent(value)}catch{return null}}
+  }
+  return null;
 }
 
 function marketOf(hostname) {
