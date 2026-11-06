@@ -19,7 +19,7 @@ Use a versão pública: https://produto-em-um-lugar.starrypangolin.chatgpt.site
 
 Os marketplaces mudam as páginas e podem ocultar campos, exigir login, carregar dados apenas por JavaScript ou limitar requisições automatizadas. A API do Mercado Livre pode limitar chamadas; o endpoint público da Shopee não é estável. O AliExpress pode bloquear a leitura automatizada. O app informa quando não consegue ler a página e mostra o endereço resolvido, quando disponível. Não tenta resolver CAPTCHA, simular login ou contornar esses controles. Campos ausentes significam que não foram entregues na resposta pública daquela consulta.
 
-O Worker aceita apenas HTTPS e hosts das lojas configuradas, limita o tamanho da resposta e acompanha no máximo seis redirecionamentos dentro da mesma loja.
+O Worker aceita apenas HTTPS e hosts das lojas configuradas, limita o tamanho da resposta e acompanha no máximo dez redirecionamentos dentro da mesma loja.
 
 ## Desenvolvimento
 
