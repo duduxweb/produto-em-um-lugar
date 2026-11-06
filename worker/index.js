@@ -59,8 +59,9 @@ const page = `<!doctype html>
       result.querySelectorAll('.thumb').forEach(el=>el.addEventListener('click',()=>{const main=result.querySelector('#main-image');if(main)main.src=el.dataset.src}));
       const img=result.querySelector('#main-image');if(img)img.addEventListener('error',()=>{img.alt='Imagem não carregou';img.style.opacity='.3'});
     }
-    form.addEventListener('submit',async e=>{e.preventDefault();const value=input.value.trim();if(!value)return;result.classList.remove('show');result.replaceChildren();button.disabled=true;message.style.display='none';loading.style.display='inline-flex';status.className='status';try{const res=await fetch('/api/product',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:value})});const data=await res.json();if(!res.ok)throw new Error(data.message||'Não consegui consultar esse link.');render(data.product);setState(data.warning||'Consulta concluída. Os campos variam conforme a página da loja.','ok')}catch(err){setState(err.message||'Falha ao consultar. Tente novamente mais tarde.','error')}finally{button.disabled=false;message.style.display='inline';loading.style.display='none'}});
+    form.addEventListener('submit',async e=>{e.preventDefault();const value=input.value.trim();if(!value)return;result.classList.remove('show');result.replaceChildren();button.disabled=true;message.style.display='none';loading.style.display='inline-flex';status.className='status';try{const res=await fetch('/api/product',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:value})});const data=await res.json();if(!res.ok){const error=new Error(data.message||'Não consegui consultar esse link.');error.resolvedUrl=data.resolvedUrl;error.market=data.market;throw error}render(data.product);setState(data.warning||'Consulta concluída. Os campos variam conforme a página da loja.','ok')}catch(err){if(err.resolvedUrl)showResolvedLink(err.resolvedUrl,err.market,err.message);setState(err.message||'Falha ao consultar. Tente novamente mais tarde.','error')}finally{button.disabled=false;message.style.display='inline';loading.style.display='none'}});
     document.querySelector('#paste').addEventListener('click',async()=>{try{input.value=await navigator.clipboard.readText();input.focus()}catch{setState('Toque e segure no campo para colar o link.')}});
+    function showResolvedLink(url,market,message){const safeUrl=typeof url==='string'&&url.toLowerCase().startsWith('https://')?url:'#';result.innerHTML='<section class="detail-card"><h2>Link resolvido'+(market?' · '+esc(market):'')+'</h2><p class="empty">'+esc(message)+'</p><a class="store-link" href="'+esc(safeUrl)+'" target="_blank" rel="noopener noreferrer">Abrir produto na loja ↗</a></section>';result.classList.add('show')}
     if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
   </script>
 </body>
@@ -97,7 +98,7 @@ export default {
         return json({product,warning:product.warning || "Consulta concluída. Os campos variam conforme a página da loja."});
       } catch (error) {
         const status = error.status || 422;
-        return json({message:error.publicMessage || "Não consegui ler os dados públicos desse produto. Confira o link ou tente novamente."},{status});
+        return json({message:error.publicMessage || "Não consegui ler os dados públicos desse produto. Confira o link ou tente novamente.",resolvedUrl:error.resolvedUrl||"",market:error.market||""},{status});
       }
     }
     return new Response("Não encontrado",{status:404,headers:{"content-type":"text/plain; charset=utf-8"}});
@@ -112,6 +113,36 @@ async function inspectProduct(input) {
   target.protocol = "https:";
   target.username = ""; target.password = ""; target.hash = "";
   const market = marketOf(target.hostname);
+  if (market === "Mercado Livre") {
+    const directId = mercadoLivreItemId(target);
+    if (directId) {
+      try { return await inspectMercadoLivre(directId, target.toString()); }
+      catch (error) { if (error.status === 404) throw publicError("O anúncio do Mercado Livre não existe mais ou está indisponível.",404,{resolvedUrl:target.toString(),market}); }
+    }
+    const resolved = await resolveProductUrl(target, market);
+    const itemId = mercadoLivreItemId(resolved.url);
+    if (itemId) {
+      try { return await inspectMercadoLivre(itemId, resolved.url); }
+      catch (error) {
+        if (error.status === 404) throw publicError("O link abriu, mas o anúncio do Mercado Livre não existe mais ou está indisponível.", 404, {resolvedUrl:resolved.url, market});
+      }
+    }
+    target = resolved.url;
+  }
+  if (market === "Shopee") {
+    const directIds = shopeeProductIds(target);
+    if (directIds) {
+      try { return await inspectShopee(directIds.shopId,directIds.itemId,target); }
+      catch { /* A API pública pode ser limitada; tenta os metadados da página. */ }
+    }
+    const resolved = await resolveProductUrl(target, market);
+    const ids = shopeeProductIds(resolved.url);
+    if (ids) {
+      try { return await inspectShopee(ids.shopId, ids.itemId, resolved.url); }
+      catch { /* A API pública pode ser limitada; tenta os metadados da página. */ }
+    }
+    target = resolved.url;
+  }
   const response = await fetchProductPage(target);
   const htmlText = response.html;
   const meta = parseMeta(htmlText);
@@ -127,12 +158,12 @@ async function inspectProduct(input) {
   const statusText = `${response.status} ${htmlText.slice(0,7000)}`.toLowerCase();
   const blocked = response.status === 403 || response.status === 429 || /captcha|verify you are human|verifique que você é humano|unusual traffic|traffic\.error|access denied|login required|login necessário|robot check/.test(statusText);
   const productSignal = Boolean(ld.title || ld.price || (ld.images||[]).length || meta["product:price:amount"] || meta["og:price:amount"]);
-  if (blocked && !productSignal) throw publicError("A loja bloqueou a leitura automatizada ou pediu uma verificação. Não consegui extrair os dados públicos nesta consulta.", 403);
+  if (blocked && !productSignal) throw publicError("O link foi resolvido, mas a loja bloqueou a leitura automatizada ou pediu uma verificação. Nenhum dado do produto foi entregue nesta consulta.", 403, {resolvedUrl:pageUrl, market});
   if (!title) {
     const message = market === "Shopee"
       ? "O link da Shopee abriu, mas esta página não trouxe os dados do produto no HTML público. Ela pode carregar os detalhes só no app ou exigir uma sessão da loja; não tentei contornar essa limitação."
       : "A página abriu, mas não entregou dados de produto que eu consiga ler. A loja pode exigir login ou carregar os detalhes só no aplicativo.";
-    throw publicError(message, 422);
+    throw publicError(message, 422, {resolvedUrl:pageUrl, market});
   }
   const specifications = [...(ld.specifications||[])];
   const allText = stripTags(htmlText).slice(0,60000);
@@ -153,11 +184,72 @@ async function inspectProduct(input) {
   };
 }
 
-async function fetchProductPage(start) {
+async function resolveProductUrl(start, market) {
+  const response = await fetchProductPage(start, {allowEmpty: true});
+  return {url:response.url, response};
+}
+
+function mercadoLivreItemId(value) {
+  const url = value instanceof URL ? value : new URL(value);
+  const match = `${url.pathname}/${url.search}`.match(/\b(ML[ABMCPU]-?\d{6,})\b/i);
+  return match ? match[1].toUpperCase().replace("-", "") : "";
+}
+
+async function inspectMercadoLivre(itemId, sourceUrl) {
+  const item = await fetchJson(`https://api.mercadolibre.com/items/${encodeURIComponent(itemId)}`, "https://www.mercadolivre.com.br/");
+  if (!item || !item.id) throw publicError("A API pública do Mercado Livre não retornou este anúncio.", 502, {resolvedUrl:sourceUrl,market:"Mercado Livre"});
+  let description = "";
+  try {
+    const details = await fetchJson(`https://api.mercadolibre.com/items/${encodeURIComponent(item.id)}/description`, "https://www.mercadolivre.com.br/");
+    description = clean(details.plain_text || details.text || "").slice(0,12000);
+  } catch { /* A descrição pode não estar disponível para todos os anúncios. */ }
+  const attributes = (item.attributes || []).map(a => ({name:clean(a.name || a.id || "Especificação"),value:clean(a.value_name || a.value_id || "")})).filter(a=>a.name&&a.value).slice(0,45);
+  const pictures = (item.pictures || []).map(p=>p.secure_url || p.url).filter(Boolean).slice(0,20);
+  let seller = "";
+  if (item.seller_id) {
+    try { const sellerData=await fetchJson(`https://api.mercadolibre.com/users/${encodeURIComponent(item.seller_id)}`, "https://www.mercadolivre.com.br/"); seller=sellerData.nickname||sellerData.first_name||""; } catch {}
+  }
+  const permalink = absoluteHttp(item.permalink, sourceUrl) || sourceUrl;
+  return {market:"Mercado Livre",title:clean(item.title||""),description,url:permalink,canonical:permalink,price:item.price??null,oldPrice:item.original_price??null,currency:item.currency_id||"BRL",discount:item.original_price&&item.price<item.original_price?`${Math.round((1-item.price/item.original_price)*100)}% de desconto`:"",rating:item.reviews?.rating_average||"",reviewCount:item.reviews?.total||"",stock:item.available_quantity??"",availability:item.status||"",brand:"",sku:item.seller_custom_field||item.id||"",condition:item.condition||"",category:item.category_id||"",seller,sellerRating:"",shipping:item.shipping?.free_shipping?"Grátis":"",images:pictures,specifications:attributes,variants:(item.variation_attributes||[]).map(a=>`${a.name}: ${(a.values||[]).map(v=>v.name).join(", ")}`),completeness:"Dados encontrados",warning:"Dados consultados na API pública do Mercado Livre.",fetchedAt:new Date().toISOString()};
+}
+
+function shopeeProductIds(value) {
+  const url=value instanceof URL?value:new URL(value);
+  const path=url.pathname;
+  const product=path.match(/i\.(\d+)\.(\d+)(?:\/|$)/i);
+  if(product)return {shopId:product[1],itemId:product[2]};
+  const modern=path.match(/\/(?:product|product-detail)\/(\d+)\/(\d+)(?:\/|$)/i);
+  if(modern)return {shopId:modern[1],itemId:modern[2]};
+  return null;
+}
+
+async function inspectShopee(shopId,itemId,sourceUrl) {
+  const endpoint=`https://shopee.com.br/api/v4/item/get?shopid=${encodeURIComponent(shopId)}&itemid=${encodeURIComponent(itemId)}`;
+  const data=await fetchJson(endpoint,"https://shopee.com.br/");
+  const item=data?.data?.item||data?.data?.item_basic||data?.item||null;
+  if(!item)throw new Error("Shopee product unavailable");
+  const images=(item.images||[]).map(image=>/^https?:/i.test(image)?image:`https://down-br.img.susercontent.com/file/${encodeURIComponent(image)}`).slice(0,20);
+  const priceValue=Number(item.price??item.price_min??NaN);
+  const divisor=priceValue>1000?100000:1;
+  const price=Number.isFinite(priceValue)?priceValue/divisor:null;
+  const specifications=(item.attributes||[]).map(a=>({name:clean(a.name||"Especificação"),value:clean(a.value||"")})).filter(a=>a.name&&a.value).slice(0,45);
+  const variants=(item.tier_variations||[]).flatMap(t=>(t.options||[]).map(option=>`${t.name||"Opção"}: ${option}`)).slice(0,40);
+  const canonical=sourceUrl.toString();
+  return {market:"Shopee",title:clean(item.name||item.title||""),description:clean(item.description||"").slice(0,12000),url:canonical,canonical,price,oldPrice:null,currency:"BRL",discount:"",rating:item.item_rating?.rating_star||"",reviewCount:item.item_rating?.rating_count?.reduce?.((a,b)=>a+b,0)||"",stock:item.stock??"",availability:item.status===1?"Disponível":"",brand:"",sku:String(item.itemid||itemId),condition:"",category:"",seller:"",sellerRating:"",shipping:"",images,specifications,variants,completeness:"Dados encontrados",warning:"Dados retornados pelo endpoint público da Shopee; campos variam por anúncio.",fetchedAt:new Date().toISOString()};
+}
+
+async function fetchJson(url,referer) {
+  const response=await fetch(url,{method:"GET",redirect:"error",headers:{"user-agent":UA,"accept":"application/json,text/plain,*/*","accept-language":"pt-BR,pt;q=0.9,en;q=0.6","referer":referer,"origin":new URL(referer).origin},signal:AbortSignal.timeout(12000)});
+  if(!response.ok)throw publicError(`A fonte pública respondeu HTTP ${response.status}.`,response.status);
+  const text=await readLimitedText(response,MAX_HTML_BYTES);
+  try{return JSON.parse(text)}catch{throw publicError("A fonte pública retornou uma resposta que não é JSON válido.",502)}
+}
+
+async function fetchProductPage(start, options = {}) {
   let current = start;
   const initialMarket = marketOf(start.hostname);
   for (let hop=0; hop<=MAX_REDIRECTS; hop++) {
-    if (marketOf(current.hostname) !== initialMarket) throw publicError("O link redirecionou para outra loja. Por segurança, parei a consulta.");
+    if (marketOf(current.hostname) !== initialMarket) throw publicError("O link redirecionou para outra loja. Por segurança, parei a consulta.",422,{resolvedUrl:current.toString(),market:initialMarket});
     let res;
     try {
       res = await fetch(current.toString(), {method:"GET",redirect:"manual",headers:{"user-agent":UA,"accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","accept-language":"pt-BR,pt;q=0.9,en;q=0.6"},signal:AbortSignal.timeout(12000)});
@@ -165,14 +257,15 @@ async function fetchProductPage(start) {
     if ([301,302,303,307,308].includes(res.status)) {
       const location=res.headers.get("location");
       if(!location)throw publicError("A loja enviou um redirecionamento sem destino válido.");
-      if(hop===MAX_REDIRECTS)throw publicError("Esse link passou por redirecionamentos demais.");
+      if(hop===MAX_REDIRECTS)throw publicError("Esse link passou por redirecionamentos demais.",422,{resolvedUrl:current.toString(),market:initialMarket});
       let next;try{next=new URL(location,current)}catch{throw publicError("A loja enviou um redirecionamento inválido.")}
-      if(next.protocol!=="https:"||marketOf(next.hostname)!==initialMarket)throw publicError("O redirecionamento saiu da loja esperada. Por segurança, parei a consulta.");
+      if(next.protocol!=="https:"||marketOf(next.hostname)!==initialMarket)throw publicError("O redirecionamento saiu da loja esperada. Por segurança, parei a consulta.",422,{resolvedUrl:current.toString(),market:initialMarket});
       current=next;continue;
     }
     const contentType=(res.headers.get("content-type")||"").toLowerCase();
     if(!contentType.includes("text/html")&&!contentType.includes("application/xhtml+xml"))throw publicError("Esse endereço não retornou uma página de produto em HTML.",415);
     const html=await readLimitedText(res,MAX_HTML_BYTES);
+    if (options.allowEmpty && !contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) return {status:res.status,html:"",url:current};
     return {status:res.status,html,url:current};
   }
   throw publicError("Não foi possível abrir esse endereço.");
@@ -235,6 +328,6 @@ function clean(s){return decodeEntities(stripTags(String(s||""))).replace(/[\t\f
 function decodeEntities(s){return String(s||"").replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp|sol|colon);/gi,(m,e)=>{const x=e.toLowerCase();if(x==="amp")return"&";if(x==="lt")return"<";if(x==="gt")return">";if(x==="quot")return'"';if(x==="apos")return"'";if(x==="nbsp")return" ";if(x==="sol")return"/";if(x==="colon")return":";const code=x.startsWith("#x")?parseInt(x.slice(2),16):parseInt(x.slice(1),10);return Number.isFinite(code)?String.fromCodePoint(Math.min(code,0x10ffff)):m})}
 async function readLimitedText(response,maxBytes){if(!response.body)return"";const reader=response.body.getReader();const decoder=new TextDecoder();let total=0,text="";while(true){const {done,value}=await reader.read();if(done)break;total+=value.byteLength;if(total>maxBytes){await reader.cancel();break}text+=decoder.decode(value,{stream:true})}return text+decoder.decode()}
 function rateLimit(request){const now=Date.now();for(const [key,v] of requestCounts)if(now-v.start>LIMIT_WINDOW_MS)requestCounts.delete(key);const key=request.headers.get("cf-connecting-ip")||"unknown";const v=requestCounts.get(key)||{start:now,count:0};v.count++;requestCounts.set(key,v);return{ok:v.count<=LIMIT_PER_WINDOW}}
-function publicError(message,status=422){const e=new Error(message);e.publicMessage=message;e.status=status;return e}
+function publicError(message,status=422,details={}){const e=new Error(message);e.publicMessage=message;e.status=status;Object.assign(e,details);return e}
 function json(value,init={}){const headers=new Headers(init.headers);headers.set("content-type","application/json; charset=utf-8");headers.set("cache-control","no-store");return new Response(JSON.stringify(value),{...init,headers})}
 function html(value){return new Response(value,{headers:{"content-type":"text/html; charset=utf-8","cache-control":"public, max-age=60","content-security-policy":"default-src 'self' https: data:; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'","x-content-type-options":"nosniff","referrer-policy":"strict-origin-when-cross-origin"}})}
