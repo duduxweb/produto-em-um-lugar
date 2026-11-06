@@ -261,7 +261,7 @@ async function fetchProductPage(start, options = {}) {
     if ([301,302,303,307,308].includes(res.status)) {
       const location=res.headers.get("location");
       if(!location)throw publicError("A loja enviou um redirecionamento sem destino válido.");
-      if(hop===MAX_REDIRECTS)throw publicError("Esse link passou por redirecionamentos demais.",422,{resolvedUrl:current.toString(),market:initialMarket});
+      if(hop===MAX_REDIRECTS)throw publicError(initialMarket==="AliExpress"?"A AliExpress resolveu o link para o produto, mas a página entrou em uma etapa de sessão e não entregou os detalhes nesta consulta.":"Esse link passou por redirecionamentos demais.",422,{resolvedUrl:current.toString(),market:initialMarket});
       let next;try{next=new URL(location,current)}catch{throw publicError("A loja enviou um redirecionamento inválido.")}
       if(initialMarket==="AliExpress")next=aliExpressNestedTarget(next)||next;
       if(next.protocol!=="https:"||marketOf(next.hostname)!==initialMarket)throw publicError("O redirecionamento saiu da loja esperada. Por segurança, parei a consulta.",422,{resolvedUrl:current.toString(),market:initialMarket});
