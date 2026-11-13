@@ -1,26 +1,23 @@
-# Arquitetura e fluxos — produto-em-um-lugar
+# Arquitetura e fluxos — Produto em Um Lugar
 
-Estado: **documentação preliminar baseada em README/integração do repositório**. Não equivale a auditoria runtime ou deploy confirmado.
-Fonte: https://github.com/duduxweb/produto-em-um-lugar
-Protocolo global: https://drive.google.com/file/d/1Z2EqStVBUv0M2-q-hBCGnVoBM8nPgBfK/view
+Documentação 1.0 · 13/11/2026 · [HTML interativo](fluxos.html)
 
-## Etapa 1 — Inventário e diagnóstico
-- Componentes e dependências identificados: Worker; Mercado Livre; Shopee; AliExpress.
-- Evidência: README e/ou documentação do próprio projeto.
-- Limites: Extração depende de limitações externas; sem teste de links agora.
+## Etapa 1 · Inventário
 
-## Etapa 2 — Fluxo atual documentado
-URL de marketplace → Worker valida domínio e redirecionamento → APIs/metadados públicos → ficha de produto no web app.
+Base GitHub `950dad6453239a9e9c108f078584a1fdd27ec754`.
 
-## Índice de verificação
-- [x] Fonte documental identificada
-- [x] Fluxo preliminar descrito
-- [ ] Componentes em execução conferidos
-- [ ] Fluxo ponta a ponta testado
-- [ ] Publicação/versão operacional validada
+| Componente | Entrada e ação | Fonte |
+| --- | --- | --- |
+| Operador | Informa uma URL pública de produto. O formulário envia a URL ao Worker pelo POST /api/product. | [worker/index.js](https://github.com/duduxweb/produto-em-um-lugar/blob/950dad6453239a9e9c108f078584a1fdd27ec754/worker/index.js) |
+| Worker | Valida HTTPS e restringe hosts e redirecionamentos. Usa APIs públicas e metadados conforme o marketplace. Bloqueios externos podem limitar o resultado. | [worker/index.js](https://github.com/duduxweb/produto-em-um-lugar/blob/950dad6453239a9e9c108f078584a1fdd27ec754/worker/index.js) |
+| Ficha | Apresenta campos disponíveis, origem e avisos. A disponibilidade dos dados varia por página. GET /health indica que o Worker responde. | [README.md](https://github.com/duduxweb/produto-em-um-lugar/blob/950dad6453239a9e9c108f078584a1fdd27ec754/README.md) |
 
-## Etapa 3 — Reservada
-Não executar otimizações ou mudanças operacionais sem nova autorização.
+## Etapa 2 · Evidências e pendências
+
+GET /health devolveu HTTP 200 e ok=true no domínio declarado no README. Rota e validações conferidas no código.
+
+Confirmar revisão efetivamente hospedada e testar uma URL pública válida por marketplace em ambiente autorizado. A atualização documental foi publicada em branch.
 
 ## Histórico
-- 2026-11-13: mapa preliminar criado; estado de execução não comprovado.
+
+- 1.0 · Primeiro mapa interativo. Atualize o índice e o HTML na mesma revisão e confira a cópia do Drive.
